@@ -1,0 +1,91 @@
+Parameters:
+  InstanceTypeParameter:
+    Type: String
+    Default: t2.micro
+    Description: Choose t2.micro, t2.medium or t2.small
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of EC2 login key
+
+Mappings:
+  AmiRegionMap:
+    us-east-1:
+      ec2Linux: "ami-022e1a32d3f742bd8"
+      ubuntu: "ami-0261755bbcb8c4a84"
+    us-east-2:
+      ec2Linux: "ami-0e820afa569e84cc1"
+      ubuntu: "ami-0430580de6244e02e"
+
+Resources:
+  MyInstance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          # Raises error in Amazon Linux 2023, php version must be specified explicitly e.g php8.1 ($ cat /var/log/cfn-init.log)
+          # packages:
+          #   yum: 
+          #     httpd: []
+          #     php: []
+          #     ...
+          commands:
+            update_and_install_packages:
+              command: "yum update -y && yum install -y php wget httpd unzip git"
+            test:
+              command: "wget https://www.tooplate.com/zip-templates/2117_infinite_loop.zip && unzip -o 2117_infinite_loop.zip && cp -r 2117_infinite_loop/* /var/www/html/"
+          files:
+            /var/www/html/hello.html:
+              content: !Sub |
+                <!DOCTYPE html>
+                <html>
+                  <body>
+                    <h1>Welcome to CloudFormation.</h1>
+                    <p>This site was deployed by CloudFormation</p>
+                  </body>
+                </html>
+          services:
+            sysvinit:
+              httpd:
+                enabled: true
+                ensureRunning: true
+    Properties:
+      InstanceType: !Ref InstanceTypeParameter
+      KeyName: !Ref KeyName
+      ImageId: !FindInMap [AmiRegionMap, !Ref AWS::Region, ec2Linux]
+      Tags:
+        - Key: "Name"
+          Value: !Join ["-", [CloudFormation, inst, in, !Ref AWS::Region]]
+      SecurityGroupIds:
+        - !GetAtt [CFSG, GroupId]
+      UserData:
+        'Fn::Base64':
+          !Sub |
+            #!/bin/bash -x
+            # Ensure AWS CFN Bootstrap is the latest
+            yum install -y aws-cfn-bootstrap
+            # Install the files and packages from the metadata
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource MyInstance --region ${AWS::Region}
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource MyInstance --region ${AWS::Region}
+
+  CFSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow ssh & http to client host
+      VpcId: vpc-0eede57d7b1f5b229
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 82.103.99.58/32
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 82.103.99.58/32
+
+Outputs:
+  PrintSomeInfo:
+    Value: !GetAtt [MyInstance, PublicDnsName]
